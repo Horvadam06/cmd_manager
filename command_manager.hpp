@@ -15,6 +15,7 @@
 namespace cmd {
 
 	using ContextId = const void*;
+	using ContextList = std::vector<ContextId>;
 
 	enum class ConflictPolicy {
 		Error,      // default
@@ -31,7 +32,6 @@ namespace cmd {
 		/***
 		Command registry parameters
 		***/
-		using ContextList = std::vector<ContextId>;
 		struct Command {
 			std::string name;
 			std::string description;
@@ -64,6 +64,9 @@ namespace cmd {
 		std::unordered_map<ContextId,
 			std::unordered_map<std::string, std::unique_ptr<Command>>
 		> commands_;
+
+		void redrawLine(const std::string& line, size_t cursor) const;
+		std::vector<std::string> getCompletions(const ContextList& contexts, const std::string& prefix) const;
 
 	public:
 								/***

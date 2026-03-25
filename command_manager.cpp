@@ -1,12 +1,14 @@
-#include "command_manager.h"
+#include "command_manager.hpp"
+#include "input.hpp"
 
 #include <iostream>
 #include <sstream>
 #include <algorithm>
 #include <cctype>
 #include <cassert>
+#include <unordered_set>
 
-//TODO update to so uses assert at more places
+//TODO update to so uses assert at more places & rethink auto-fill, cause it still has some problems (false input on enter)
 
 namespace cmd {
 
@@ -132,13 +134,64 @@ namespace cmd {
 	}
 
 	void CommandManager::runInteractive(const ContextList& contexts, bool modal, ConflictPolicy policy) {
+		enableRawMode();
 		std::string line;
+		size_t cursor = 0;
+		std::vector<std::string> matches;
+		size_t matchIndex = 0;
+
+		std::cout << "> ";
 		while (true) {
-			std::cout << "> ";
-			if (!std::getline(std::cin, line)) break;
-			const Command* executed = execute(contexts, line);
-			if (!modal || (executed && executed->name != "help")) break;
+			KeyPress kp = readKey();
+			switch (kp.key) {
+			case Key::Enter: {
+				std::cout << "\n";
+				if (!line.empty()) {
+					const Command* executed = execute(contexts, line, policy);
+					if (!modal || (executed && executed->name != "help")) {
+						disableRawMode();
+						return;
+					}
+				}
+				line.clear();
+				cursor = 0;
+				matches.clear();
+				std::cout << "> ";
+				break;
+			}
+			case Key::Backspace: {
+				if (cursor > 0) {
+					line.erase(cursor - 1, 1);
+					cursor--;
+					matches.clear();
+					redrawLine(line, cursor);
+				}
+				break;
+			}
+			case Key::Tab: {
+				if (matches.empty())
+					matches = getCompletions(contexts, line);
+				if (matches.empty()) break;
+				line = matches[matchIndex % matches.size()];
+				cursor = line.size();
+				matchIndex++;
+				redrawLine(line, cursor);
+				break;
+			}
+			case Key::ArrowLeft: { if (cursor > 0) { cursor--; redrawLine(line, cursor); } break; }
+			case Key::ArrowRight: { if (cursor < line.size()) { cursor++; redrawLine(line, cursor); } break; }
+			case Key::Character: {
+				line.insert(cursor, 1, kp.ch);
+				cursor++;
+				matches.clear();
+				matchIndex = 0;
+				redrawLine(line, cursor);
+				break;
+			}
+			default: break;
+			}
 		}
+		disableRawMode();
 	}
 
 	void CommandManager::printHelp(const ContextList& contexts, bool showAliases, ConflictPolicy policy) const {
@@ -197,5 +250,36 @@ namespace cmd {
 		else if (!showAliases) {
 			std::cout << "Use 'help aliases' to display the command aliases." << std::endl;
 		}
+	}
+
+	void CommandManager::redrawLine(const std::string& line, size_t cursor) const {
+		std::cout << "\033[?25l";         // hide cursor
+		std::cout << "\r\033[K";          // go to line start, clear line
+		std::cout << "> " << line;        // redraw
+		size_t col = cursor + 2;
+		std::cout << "\r\033[" << col << "C";  // reposition
+		std::cout << "\033[?25h";         // show cursor
+		std::cout.flush();
+	}
+
+	std::vector<std::string> CommandManager::getCompletions(const ContextList& contexts, const std::string& prefix) const {
+		std::vector<std::string> results;
+		ContextList searchOrder = contexts;
+		searchOrder.push_back(globalContext());
+
+		std::unordered_set<std::string> seen;
+		for (ContextId ctx : searchOrder) {
+			auto ctxIt = commands_.find(ctx);
+			if (ctxIt == commands_.end()) continue;
+			for (const auto& pair : ctxIt->second) {
+				if (pair.second->is_alias) continue;
+				if (seen.count(pair.first)) continue;
+				if (pair.first.substr(0, prefix.size()) == prefix) {
+					results.push_back(pair.first);
+					seen.insert(pair.first);
+				}
+			}
+		}
+		return results;
 	}
 }
