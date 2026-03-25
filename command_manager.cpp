@@ -4,29 +4,42 @@
 #include <sstream>
 #include <algorithm>
 #include <cctype>
+#include <cassert>
+
+//TODO update to so uses assert at more places
 
 namespace cmd {
 
 	void CommandManager::message(const std::string& message) {
 		if (Debug_mode)
-			std::cout << '[' + lib_name + "] " << message << std::endl;
+			std::cout << '[' + lib_id + "] " << message << std::endl;
 	}
-	
-	/***
-	Creates and manages a singleton instance
-	***/
+
+	static ContextId globalContext() {
+		static constexpr char key = 0;
+		return &key;
+	}
+
+	CommandManager::CommandManager() {
+		registerCommand(globalContext(), "help", "List available commands",
+			[this](const std::vector<std::string>& args, const ContextList& contexts) {
+				bool showAliases = false;
+				if (!args.empty()) {
+					std::string arg = args[0];
+					std::transform(arg.begin(), arg.end(), arg.begin(), ::tolower);
+					showAliases = (arg == "aliases");
+				}
+				printHelp(contexts, showAliases);
+			});
+	}
+
 	CommandManager& CommandManager::instance() {
 		static CommandManager mgr;
 		return mgr;
 	}
 
-
-	/***
-	Register an alias in the command table.
-	INFO: Overloading isn't supported.
-	***/
-	const Command* CommandManager::registerCommand(ContextId ctx, const std::string& name, const std::string& description,
-		std::function<void(const std::vector<std::string>&)> handler)
+	const CommandManager::Command* CommandManager::registerCommand(ContextId ctx, const std::string& name, const std::string& description,
+		std::function<void(const std::vector<std::string>&, const ContextList&)> handler)
 	{
 		auto& ctxMap = commands_[ctx];
 		if (ctxMap.find(name) != ctxMap.end()) {
@@ -44,12 +57,6 @@ namespace cmd {
 		return ptr;
 	}
 
-
-	/***
-	Register an alias in the command table to a command.
-	INFO: Overloading isn't supported.
-	WARNING: Can't be called on an another alias
-	***/
 	bool CommandManager::registerAlias(ContextId ctx, const std::string& alias, const std::string& target) {
 		auto& ctxMap = commands_[ctx];
 
@@ -75,10 +82,6 @@ namespace cmd {
 		return true;
 	}
 
-
-	/***
-	Private praser function
-	***/
 	bool CommandManager::parseInput(const std::string& input, std::string& cmd, std::vector<std::string>& args) const {
 		std::istringstream iss(input);
 		if (!(iss >> cmd)) return false;
@@ -90,85 +93,109 @@ namespace cmd {
 		return true;
 	}
 
-
-	/***
-	Prase, searches, and executes the command from the command list given trough the input (has argument support).
-	***/
-	const Command* CommandManager::execute(ContextId ctx, const std::string& input) {
+	const CommandManager::Command* CommandManager::execute(const ContextList& contexts, const std::string& input, ConflictPolicy policy) {
 		std::string cmdName;
 		std::vector<std::string> args;
 		if (!parseInput(input, cmdName, args)) return nullptr;
 
-		if (cmdName == "help") {
-			if (!args.empty())
-				std::transform(args[0].begin(), args[0].end(), args[0].begin(), ::tolower);
-			printHelp(ctx, !args.empty() && args[0] == "aliases");
-			return nullptr;
+		// Build full search order: provided contexts + global always last
+		ContextList searchOrder = contexts;
+		searchOrder.push_back(globalContext());
+
+		if (policy == ConflictPolicy::Error) {
+			std::unordered_map<std::string, ContextId> seen;
+			for (ContextId ctx : searchOrder) {
+				auto ctxIt = commands_.find(ctx);
+				if (ctxIt == commands_.end()) continue;
+				for (const auto& pair : ctxIt->second) {
+					if (pair.second->is_alias) continue;
+					auto it = seen.find(pair.first);
+					if (it != seen.end() && it->second != ctx)
+						assert(false && "Command name conflict across contexts");
+					seen[pair.first] = ctx;
+				}
+			}
 		}
 
-		auto ctxIt = commands_.find(ctx);
-		auto cmdIt = ctxIt->second.find(cmdName);
-
-		if (ctxIt == commands_.end() || cmdIt == ctxIt->second.end())
-		{
-			std::cout << "Unknown command: " << cmdName << "\n";
-			return nullptr;
-		}
-
-		if (cmdIt->second->handler)
-			cmdIt->second->handler(args);
+		for (ContextId ctx : searchOrder) {
+			auto ctxIt = commands_.find(ctx);
+			if (ctxIt == commands_.end()) continue;
+			auto cmdIt = ctxIt->second.find(cmdName);
+			if (cmdIt == ctxIt->second.end()) continue;
+			if (cmdIt->second->handler)
+				cmdIt->second->handler(args, contexts);
 			return cmdIt->second.get();
+		}
 
-
+		std::cout << "Unknown command: " << cmdName << "\n";
+		return nullptr;
 	}
 
-
-	/***
-	Interrupts the program running for an internal command loop.
-	***/
-	void CommandManager::runInteractive(ContextId ctx, bool modal) {
+	void CommandManager::runInteractive(const ContextList& contexts, bool modal, ConflictPolicy policy) {
 		std::string line;
 		while (true) {
 			std::cout << "> ";
 			if (!std::getline(std::cin, line)) break;
-			const Command* executed = execute(ctx, line);
-			if (!modal && executed && executed->name != "help") break;
+			const Command* executed = execute(contexts, line);
+			if (!modal || (executed && executed->name != "help")) break;
 		}
 	}
 
-
-	/***
-	Context aware command list printing function, with alias support if enabled.
-	***/
-	void CommandManager::printHelp(ContextId ctx, bool showAliases) const {
-
+	void CommandManager::printHelp(const ContextList& contexts, bool showAliases, ConflictPolicy policy) const {
 		std::cout << "Available commands:\n";
-
-		auto ctxIt = commands_.find(ctx);
-		if (ctxIt == commands_.end()) return;
-
+		std::unordered_map<std::string, ContextId> seen;
 		std::unordered_map<std::string, std::vector<std::string>> aliasMap;
-		if (showAliases) {
+
+		// Conflict check pass
+		for (ContextId ctx : contexts) {
+			auto ctxIt = commands_.find(ctx);
+			if (ctxIt == commands_.end()) continue;
 			for (const auto& pair : ctxIt->second) {
-				if (pair.second->is_alias)
-					aliasMap[pair.second->alias_target].push_back(pair.first);
-			}
-		}
-
-		for (const auto& pair : ctxIt->second) {
-			if (pair.second->is_alias) continue;
-			std::cout << "  " << pair.first;
-			auto it = aliasMap.find(pair.first);
-			if (it != aliasMap.end() && !it->second.empty()) {
-				std::cout << " (";
-				for (size_t i = 0; i < it->second.size(); ++i) {
-					if (i > 0) std::cout << ", ";
-					std::cout << it->second[i];
+				if (pair.second->is_alias) continue;
+				auto it = seen.find(pair.first);
+				if (it != seen.end() && it->second != ctx) {
+					if (policy == ConflictPolicy::Error)
+						assert(false && "Command name conflict across contexts");
 				}
-				std::cout << ")";
+				else seen[pair.first] = ctx;
 			}
-			std::cout << " - " << pair.second->description << "\n";
 		}
 
+		seen.clear();
+
+		// Print pass
+		bool isEmpty = true;
+		for (ContextId ctx : contexts) {
+			auto ctxIt = commands_.find(ctx);
+			if (ctxIt == commands_.end()) continue;
+			isEmpty = false;
+			if (showAliases) {
+				for (const auto& pair : ctxIt->second) {
+					if (pair.second->is_alias)
+						aliasMap[pair.second->alias_target].push_back(pair.first);
+				}
+			}
+			for (const auto& pair : ctxIt->second) {
+				if (pair.second->is_alias) continue;
+				if (seen.count(pair.first)) continue;
+				seen[pair.first] = ctx;
+				std::cout << "  " << pair.first;
+				auto it = aliasMap.find(pair.first);
+				if (it != aliasMap.end() && !it->second.empty()) {
+					std::cout << " (";
+					for (size_t i = 0; i < it->second.size(); ++i) {
+						if (i > 0) std::cout << ", ";
+						std::cout << it->second[i];
+					}
+					std::cout << ")";
+				}
+				std::cout << " - " << pair.second->description << "\n";
+			}
+		}
+		if (isEmpty)
+			std::cout << "  No command(s) have been registered for the given context(s)." << std::endl;
+		else if (!showAliases) {
+			std::cout << "Use 'help aliases' to display the command aliases." << std::endl;
+		}
 	}
 }

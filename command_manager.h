@@ -9,49 +9,99 @@
 
 /***
 * Command Manager singleton class
-* Remake this crap
+* Created by.: Horváth Ádám József, early 2026.
 ***/
 
 namespace cmd {
 
 	using ContextId = const void*;
 
-	struct Command {
-		std::string name;
-		std::string description;
-		std::function<void(const std::vector<std::string>&)> handler;
-		bool is_alias = false;
-		std::string alias_target;
+	enum class ConflictPolicy {
+		Error,      // default
+		FirstWins,  // for explicit user over-write
 	};
 
 	class CommandManager {
-		std::string lib_name = "CMD_MNGR";
-
+		/***
+		Info thingy
+		***/
+		std::string lib_id = "CMD_MNGR";
 		bool Debug_mode = false;
 
-		CommandManager(){}
+		/***
+		Command registry parameters
+		***/
+		using ContextList = std::vector<ContextId>;
+		struct Command {
+			std::string name;
+			std::string description;
+			std::function<void(const std::vector<std::string>&, const ContextList&)> handler;
+			bool is_alias = false;
+			std::string alias_target;
+		};
+
+		/***
+		Registers global & contextless command(s)
+		***/
+		CommandManager();
 		CommandManager(const CommandManager&) = delete;
 		CommandManager& operator=(const CommandManager&) = delete;
 
+		/***
+		Private praser function
+		***/
 		bool parseInput(const std::string& input, std::string& cmd, std::vector<std::string>& args) const;
 
-		void message(const std::string& message);
 		/***
-		* Internal storage:
-		* context : (name : command)
+		For system output, using a library ID
+		***/
+		void message(const std::string& message);
+
+		/***
+		Internal storage:
+		context : (name : command)
 		***/
 		std::unordered_map<ContextId,
 			std::unordered_map<std::string, std::unique_ptr<Command>>
 		> commands_;
 
 	public:
+								/***
+								Creates & manages a singleton instance
+								***/
 		static CommandManager&	instance();
-				const Command*	registerCommand	(ContextId ctx, const std::string& name, const std::string& description,
-												std::function<void(const std::vector<std::string>&)> handler);
-						bool	registerAlias	(ContextId ctx, const std::string& alias, const std::string& target);
-				const Command*	execute			(ContextId ctx, const std::string& input);
-						void	runInteractive	(ContextId ctx, bool modal = false);
-						void	printHelp		(ContextId ctx, bool showAliases = true) const;
+
+								/***
+								Register an alias in the command table.
+								INFO: Overloading isn't supported.
+								***/
+				const Command*	registerCommand(ContextId ctx, const std::string& name, const std::string& description,
+								std::function<void(const std::vector<std::string>&, const ContextList&)> handler);
+								
+								/***
+								Register an alias in the command table to a command.
+								INFO: Overloading isn't supported.
+								WARNING: Can't be called on an another alias
+								***/
+						bool	registerAlias(ContextId ctx, const std::string& alias, const std::string& target);
+
+								/***
+								Prase, searches, and executes the command from the command list given trough the input (has argument support).
+								***/
+				const Command*	execute(const ContextList& contexts, const std::string& input,
+								ConflictPolicy policy = ConflictPolicy::Error);
+
+								/***
+								Interrupts the program running till a valid (not help) command.
+								***/
+						void	runInteractive(const ContextList& contexts, bool modal = false,
+								ConflictPolicy policy = ConflictPolicy::Error);
+
+								/***
+								Context aware command list printing function, with alias support if enabled.
+								***/
+						void	printHelp(const ContextList& contexts, bool showAliases = false,
+								ConflictPolicy policy = ConflictPolicy::Error) const;
 	};
 }
 
