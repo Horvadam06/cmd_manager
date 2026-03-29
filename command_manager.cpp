@@ -40,11 +40,17 @@ namespace cmd {
 		return mgr;
 	}
 
+	CommandManager::Command* CommandManager::findInList(CommandList& list, const std::string& name) const {
+		for (auto& pair : list)
+			if (pair.first == name) return pair.second.get();
+		return nullptr;
+	}
+
 	const CommandManager::Command* CommandManager::registerCommand(ContextId ctx, const std::string& name, const std::string& description,
 		std::function<void(const std::vector<std::string>&, const ContextList&)> handler)
 	{
 		auto& ctxMap = commands_[ctx];
-		if (ctxMap.find(name) != ctxMap.end()) {
+		if (findInList(ctxMap, name)) {
 			message("Duplicated '" + name + "' registry entry!");
 			return nullptr;
 		}
@@ -55,34 +61,34 @@ namespace cmd {
 		cmd->handler = std::move(handler);
 
 		const Command* ptr = cmd.get();
-		ctxMap[name] = std::move(cmd);
+		ctxMap.emplace_back(name, std::move(cmd));
 		return ptr;
 	}
 
-	bool CommandManager::registerAlias(ContextId ctx, const std::string& alias, const std::string& target) {
-		auto& ctxMap = commands_[ctx];
+bool CommandManager::registerAlias(ContextId ctx, const std::string& alias, const std::string& target) {
+    auto& ctxList = commands_[ctx];
 
-		auto targetIt = ctxMap.find(target);
-		if (targetIt == ctxMap.end() || targetIt->second->is_alias) {
-			message("Target '" + target + "' for '" + alias + "' not found'!");
-			return false;
-		}
+    Command* targetCmd = findInList(ctxList, target);
+    if (!targetCmd || targetCmd->is_alias) {
+        message("Target '" + target + "' for '" + alias + "' not found!");
+        return false;
+    }
 
-		if (ctxMap.count(alias)) {
-			message("For target '" + target + "' duplicated alias '" + alias + "' has been found'!");
-			return false;
-		}
+    if (findInList(ctxList, alias)) {
+        message("For target '" + target + "' duplicated alias '" + alias + "' has been found!");
+        return false;
+    }
 
-		auto cmd = std::make_unique<Command>();
-		cmd->name = alias;
-		cmd->description = "";
-		cmd->handler = targetIt->second->handler;
-		cmd->is_alias = true;
-		cmd->alias_target = target;
+    auto cmd = std::make_unique<Command>();
+    cmd->name = alias;
+    cmd->description = "";
+    cmd->handler = targetCmd->handler;
+    cmd->is_alias = true;
+    cmd->alias_target = target;
 
-		ctxMap[alias] = std::move(cmd);
-		return true;
-	}
+    ctxList.emplace_back(alias, std::move(cmd));
+    return true;
+}
 
 	bool CommandManager::parseInput(const std::string& input, std::string& cmd, std::vector<std::string>& args) const {
 		std::istringstream iss(input);
@@ -100,7 +106,6 @@ namespace cmd {
 		std::vector<std::string> args;
 		if (!parseInput(input, cmdName, args)) return nullptr;
 
-		// Build full search order: provided contexts + global always last
 		ContextList searchOrder = contexts;
 		searchOrder.push_back(globalContext());
 
@@ -122,11 +127,11 @@ namespace cmd {
 		for (ContextId ctx : searchOrder) {
 			auto ctxIt = commands_.find(ctx);
 			if (ctxIt == commands_.end()) continue;
-			auto cmdIt = ctxIt->second.find(cmdName);
-			if (cmdIt == ctxIt->second.end()) continue;
-			if (cmdIt->second->handler)
-				cmdIt->second->handler(args, contexts);
-			return cmdIt->second.get();
+			Command* cmd = findInList(ctxIt->second, cmdName);
+			if (!cmd) continue;
+			if (cmd->handler)
+				cmd->handler(args, contexts);
+			return cmd;
 		}
 
 		std::cout << "Unknown command: " << cmdName << "\n";
@@ -253,12 +258,16 @@ namespace cmd {
 	}
 
 	void CommandManager::redrawLine(const std::string& line, size_t cursor) const {
-		std::cout << "\033[?25l";         // hide cursor
-		std::cout << "\r\033[K";          // go to line start, clear line
-		std::cout << "> " << line;        // redraw
-		size_t col = cursor + 2;
-		std::cout << "\r\033[" << col << "C";  // reposition
-		std::cout << "\033[?25h";         // show cursor
+		std::string buf;
+		buf += "\033[?25l";                          // hide cursor
+		buf += "\r\033[K";                           // clear line
+		buf += "> ";
+		buf += line;
+		buf += "\r\033[";
+		buf += std::to_string(cursor + 2);
+		buf += "C";
+		buf += "\033[?25h";                          // show cursor
+		std::cout << buf;
 		std::cout.flush();
 	}
 

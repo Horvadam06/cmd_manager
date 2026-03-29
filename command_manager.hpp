@@ -61,12 +61,12 @@ namespace cmd {
 		Internal storage:
 		context : (name : command)
 		***/
-		std::unordered_map<ContextId,
-			std::unordered_map<std::string, std::unique_ptr<Command>>
-		> commands_;
+		using CommandList = std::vector<std::pair<std::string, std::unique_ptr<Command>>>;
+		std::unordered_map<ContextId, CommandList> commands_;
 
 		void redrawLine(const std::string& line, size_t cursor) const;
 		std::vector<std::string> getCompletions(const ContextList& contexts, const std::string& prefix) const;
+		Command* findInList(CommandList& list, const std::string& name) const;
 
 	public:
 								/***
@@ -76,7 +76,8 @@ namespace cmd {
 
 								/***
 								Register an alias in the command table.
-								INFO: Overloading isn't supported.
+								Register overloading isn't supported.
+								@return A ptr to the registered command, null if failed
 								***/
 				const Command*	registerCommand(ContextId ctx, const std::string& name, const std::string& description,
 								std::function<void(const std::vector<std::string>&, const ContextList&)> handler);
