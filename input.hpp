@@ -2,7 +2,7 @@
 #define INPUT_H
 
     enum class Key {
-        Character, Tab, Backspace,
+        Character, Tab, Backspace, Delete,
         ArrowUp, ArrowDown, ArrowLeft, ArrowRight,
         Enter, Unknown
     };

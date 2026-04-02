@@ -11,6 +11,7 @@
 //TODO update to so uses assert at more places & rethink auto-fill, cause it still has some problems (false input on enter)
 
 namespace cmd {
+	bool CommandManager::Debug_mode = false;
 
 	void CommandManager::message(const std::string& message) {
 		if (Debug_mode)
@@ -24,6 +25,8 @@ namespace cmd {
 
 	CommandManager::CommandManager() {
 		registerCommand(globalContext(), "help", "List available commands",
+			//need to rewrite this thread, cause adding help aliases would only delay the flag stacking auto complete problem
+			//maybe a context aware dictionary, maybe even from a json or just leave it in the registry thing
 			[this](const std::vector<std::string>& args, const ContextList& contexts) {
 				bool showAliases = false;
 				if (!args.empty()) {
@@ -37,7 +40,14 @@ namespace cmd {
 
 	CommandManager& CommandManager::instance() {
 		static CommandManager mgr;
+		if (mgr.Debug_mode)
+			mgr.message("Instance requested!");
 		return mgr;
+	}
+
+	bool CommandManager::DebugMode(bool mode) {
+		Debug_mode = mode;
+		return Debug_mode;
 	}
 
 	CommandManager::Command* CommandManager::findInList(CommandList& list, const std::string& name) const {
@@ -62,10 +72,12 @@ namespace cmd {
 
 		const Command* ptr = cmd.get();
 		ctxMap.emplace_back(name, std::move(cmd));
+		if (Debug_mode)
+			message("Command registered: '" + name + "'");
 		return ptr;
 	}
 
-bool CommandManager::registerAlias(ContextId ctx, const std::string& alias, const std::string& target) {
+	bool CommandManager::registerAlias(ContextId ctx, const std::string& alias, const std::string& target) {
     auto& ctxList = commands_[ctx];
 
     Command* targetCmd = findInList(ctxList, target);
@@ -87,12 +99,15 @@ bool CommandManager::registerAlias(ContextId ctx, const std::string& alias, cons
     cmd->alias_target = target;
 
     ctxList.emplace_back(alias, std::move(cmd));
+	if (Debug_mode)
+		message("Alias registered: '" + alias + "' | Target: '" + target + "'");
     return true;
 }
 
 	bool CommandManager::parseInput(const std::string& input, std::string& cmd, std::vector<std::string>& args) const {
 		std::istringstream iss(input);
 		if (!(iss >> cmd)) return false;
+
 
 		std::transform(cmd.begin(), cmd.end(), cmd.begin(), ::tolower);
 		std::string token;
@@ -126,9 +141,13 @@ bool CommandManager::registerAlias(ContextId ctx, const std::string& alias, cons
 
 		for (ContextId ctx : searchOrder) {
 			auto ctxIt = commands_.find(ctx);
-			if (ctxIt == commands_.end()) continue;
+			if (ctxIt == commands_.end()) 
+				continue;
 			Command* cmd = findInList(ctxIt->second, cmdName);
-			if (!cmd) continue;
+			if (!cmd) 
+				continue;
+			if (Debug_mode)
+				message("Command executed: '" + cmdName + "'");
 			if (cmd->handler)
 				cmd->handler(args, contexts);
 			return cmd;
@@ -173,13 +192,22 @@ bool CommandManager::registerAlias(ContextId ctx, const std::string& alias, cons
 				}
 				break;
 			}
+			case Key::Delete: {
+				if (cursor < line.size()) {
+					line.erase(cursor, 1);
+					matches.clear();
+					redrawLine(line, cursor);
+				}
+				break;
+			}
 			case Key::Tab: {
 				if (matches.empty())
 					matches = getCompletions(contexts, line);
 				if (matches.empty()) break;
-				line = matches[matchIndex % matches.size()];
+				matchIndex = matchIndex % matches.size();
+				line = matches[matchIndex++];
 				cursor = line.size();
-				matchIndex++;
+				//std::cout << matchIndex << std::endl;
 				redrawLine(line, cursor);
 				break;
 			}

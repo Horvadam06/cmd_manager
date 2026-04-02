@@ -27,7 +27,7 @@ namespace cmd {
 		Info thingy
 		***/
 		std::string lib_id = "CMD_MNGR";
-		bool Debug_mode = false;
+		static bool Debug_mode;
 
 		/***
 		Command registry parameters
@@ -49,6 +49,10 @@ namespace cmd {
 
 		/***
 		Private praser function
+		@param
+		input: input string to parse. | 
+		cmd: parsed command from the input. | 
+		args: parsed arguments from the input
 		***/
 		bool parseInput(const std::string& input, std::string& cmd, std::vector<std::string>& args) const;
 
@@ -73,6 +77,11 @@ namespace cmd {
 								Creates & manages a singleton instance
 								***/
 		static CommandManager&	instance();
+
+								/***
+								Modifies the global debug state
+								***/
+		static bool				DebugMode(bool mode = true);
 
 								/***
 								Register an alias in the command table.

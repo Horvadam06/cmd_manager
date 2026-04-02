@@ -11,11 +11,13 @@
 		if (c == 13)  return { Key::Enter };
 		if (c == 8)   return { Key::Backspace };
 		if (c == 224) {
-			switch (_getch()) {
+			int idk = _getch();
+			switch (idk) {
 			case 72: return { Key::ArrowUp };
 			case 80: return { Key::ArrowDown };
 			case 75: return { Key::ArrowLeft };
 			case 77: return { Key::ArrowRight };
+			case 83: return { Key::Delete };
 			}
 		}
 		return { Key::Character, (char)c };
